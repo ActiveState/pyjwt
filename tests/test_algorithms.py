@@ -580,3 +580,298 @@ class TestAlgorithmsRFC7520:
 
         result = algo.verify(signing_input, key, signature)
         assert result
+
+        # private key can also be used.
+        with open(key_path("jwk_ec_key_P-521.json")) as keyfile:
+            private_key = algo.from_jwk(keyfile.read())
+
+        result = algo.verify(signing_input, private_key, signature)
+        assert result
+
+
+@crypto_required
+class TestOKPAlgorithms:
+    hello_world_sig = b"Qxa47mk/azzUgmY2StAOguAd4P7YBLpyCfU3JdbaiWnXM4o4WibXwmIHvNYgN3frtE2fcyd8OYEaOiD/KiwkCg=="
+    hello_world = b"Hello World!"
+
+    def test_okp_ed25519_should_reject_non_string_key(self):
+        algo = OKPAlgorithm()
+
+        with pytest.raises(InvalidKeyError):
+            algo.prepare_key(None)
+
+        with open(key_path("testkey_ed25519")) as keyfile:
+            algo.prepare_key(keyfile.read())
+
+        with open(key_path("testkey_ed25519.pub")) as keyfile:
+            algo.prepare_key(keyfile.read())
+
+    def test_okp_ed25519_should_accept_unicode_key(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("testkey_ed25519")) as ec_key:
+            algo.prepare_key(ec_key.read())
+
+    def test_okp_ed25519_sign_should_generate_correct_signature_value(self):
+        algo = OKPAlgorithm()
+
+        jwt_message = self.hello_world
+
+        expected_sig = base64.b64decode(self.hello_world_sig)
+
+        with open(key_path("testkey_ed25519")) as keyfile:
+            jwt_key = algo.prepare_key(keyfile.read())
+
+        with open(key_path("testkey_ed25519.pub")) as keyfile:
+            jwt_pub_key = algo.prepare_key(keyfile.read())
+
+        algo.sign(jwt_message, jwt_key)
+        result = algo.verify(jwt_message, jwt_pub_key, expected_sig)
+        assert result
+
+    def test_okp_ed25519_verify_should_return_false_if_signature_invalid(self):
+        algo = OKPAlgorithm()
+
+        jwt_message = self.hello_world
+        jwt_sig = base64.b64decode(self.hello_world_sig)
+
+        jwt_sig += b"123"  # Signature is now invalid
+
+        with open(key_path("testkey_ed25519.pub")) as keyfile:
+            jwt_pub_key = algo.prepare_key(keyfile.read())
+
+        result = algo.verify(jwt_message, jwt_pub_key, jwt_sig)
+        assert not result
+
+    def test_okp_ed25519_verify_should_return_true_if_signature_valid(self):
+        algo = OKPAlgorithm()
+
+        jwt_message = self.hello_world
+        jwt_sig = base64.b64decode(self.hello_world_sig)
+
+        with open(key_path("testkey_ed25519.pub")) as keyfile:
+            jwt_pub_key = algo.prepare_key(keyfile.read())
+
+        result = algo.verify(jwt_message, jwt_pub_key, jwt_sig)
+        assert result
+
+    def test_okp_ed25519_prepare_key_should_be_idempotent(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("testkey_ed25519.pub")) as keyfile:
+            jwt_pub_key_first = algo.prepare_key(keyfile.read())
+            jwt_pub_key_second = algo.prepare_key(jwt_pub_key_first)
+
+        assert jwt_pub_key_first == jwt_pub_key_second
+
+    def test_okp_ed25519_jwk_private_key_should_parse_and_verify(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed25519.json")) as keyfile:
+            key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", key)
+        assert algo.verify(b"Hello World!", key.public_key(), signature)
+
+    def test_okp_ed25519_jwk_private_key_should_parse_and_verify_with_private_key_as_is(
+        self,
+    ):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed25519.json")) as keyfile:
+            key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", key)
+        assert algo.verify(b"Hello World!", key, signature)
+
+    def test_okp_ed25519_jwk_public_key_should_parse_and_verify(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed25519.json")) as keyfile:
+            priv_key = algo.from_jwk(keyfile.read())
+
+        with open(key_path("jwk_okp_pub_Ed25519.json")) as keyfile:
+            pub_key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", priv_key)
+        assert algo.verify(b"Hello World!", pub_key, signature)
+
+    def test_okp_ed25519_jwk_fails_on_invalid_json(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_pub_Ed25519.json")) as keyfile:
+            valid_pub = json.loads(keyfile.read())
+        with open(key_path("jwk_okp_key_Ed25519.json")) as keyfile:
+            valid_key = json.loads(keyfile.read())
+
+        # Invalid instance type
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(123)
+
+        # Invalid JSON
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk("<this isn't json>")
+
+        # Invalid kty, not "OKP"
+        v = valid_pub.copy()
+        v["kty"] = "oct"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid crv, not "Ed25519"
+        v = valid_pub.copy()
+        v["crv"] = "P-256"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid crv, "Ed448"
+        v = valid_pub.copy()
+        v["crv"] = "Ed448"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Missing x
+        v = valid_pub.copy()
+        del v["x"]
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid x
+        v = valid_pub.copy()
+        v["x"] = "123"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid d
+        v = valid_key.copy()
+        v["d"] = "123"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+    def test_okp_ed25519_to_jwk_works_with_from_jwk(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed25519.json")) as keyfile:
+            priv_key_1 = algo.from_jwk(keyfile.read())
+
+        with open(key_path("jwk_okp_pub_Ed25519.json")) as keyfile:
+            pub_key_1 = algo.from_jwk(keyfile.read())
+
+        pub = algo.to_jwk(pub_key_1)
+        pub_key_2 = algo.from_jwk(pub)
+        pri = algo.to_jwk(priv_key_1)
+        priv_key_2 = algo.from_jwk(pri)
+
+        signature_1 = algo.sign(b"Hello World!", priv_key_1)
+        signature_2 = algo.sign(b"Hello World!", priv_key_2)
+        assert algo.verify(b"Hello World!", pub_key_2, signature_1)
+        assert algo.verify(b"Hello World!", pub_key_2, signature_2)
+
+    def test_okp_to_jwk_raises_exception_on_invalid_key(self):
+        algo = OKPAlgorithm()
+
+        with pytest.raises(InvalidKeyError):
+            algo.to_jwk({"not": "a valid key"})
+
+    def test_okp_ed448_jwk_private_key_should_parse_and_verify(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed448.json")) as keyfile:
+            key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", key)
+        assert algo.verify(b"Hello World!", key.public_key(), signature)
+
+    def test_okp_ed448_jwk_private_key_should_parse_and_verify_with_private_key_as_is(
+        self,
+    ):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed448.json")) as keyfile:
+            key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", key)
+        assert algo.verify(b"Hello World!", key, signature)
+
+    def test_okp_ed448_jwk_public_key_should_parse_and_verify(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed448.json")) as keyfile:
+            priv_key = algo.from_jwk(keyfile.read())
+
+        with open(key_path("jwk_okp_pub_Ed448.json")) as keyfile:
+            pub_key = algo.from_jwk(keyfile.read())
+
+        signature = algo.sign(b"Hello World!", priv_key)
+        assert algo.verify(b"Hello World!", pub_key, signature)
+
+    def test_okp_ed448_jwk_fails_on_invalid_json(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_pub_Ed448.json")) as keyfile:
+            valid_pub = json.loads(keyfile.read())
+        with open(key_path("jwk_okp_key_Ed448.json")) as keyfile:
+            valid_key = json.loads(keyfile.read())
+
+        # Invalid instance type
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(123)
+
+        # Invalid JSON
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk("<this isn't json>")
+
+        # Invalid kty, not "OKP"
+        v = valid_pub.copy()
+        v["kty"] = "oct"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid crv, not "Ed448"
+        v = valid_pub.copy()
+        v["crv"] = "P-256"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid crv, "Ed25519"
+        v = valid_pub.copy()
+        v["crv"] = "Ed25519"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Missing x
+        v = valid_pub.copy()
+        del v["x"]
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid x
+        v = valid_pub.copy()
+        v["x"] = "123"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+        # Invalid d
+        v = valid_key.copy()
+        v["d"] = "123"
+        with pytest.raises(InvalidKeyError):
+            algo.from_jwk(v)
+
+    def test_okp_ed448_to_jwk_works_with_from_jwk(self):
+        algo = OKPAlgorithm()
+
+        with open(key_path("jwk_okp_key_Ed448.json")) as keyfile:
+            priv_key_1 = algo.from_jwk(keyfile.read())
+
+        with open(key_path("jwk_okp_pub_Ed448.json")) as keyfile:
+            pub_key_1 = algo.from_jwk(keyfile.read())
+
+        pub = algo.to_jwk(pub_key_1)
+        pub_key_2 = algo.from_jwk(pub)
+        pri = algo.to_jwk(priv_key_1)
+        priv_key_2 = algo.from_jwk(pri)
+
+        signature_1 = algo.sign(b"Hello World!", priv_key_1)
+        signature_2 = algo.sign(b"Hello World!", priv_key_2)
+        assert algo.verify(b"Hello World!", pub_key_2, signature_1)
+        assert algo.verify(b"Hello World!", pub_key_2, signature_2)
