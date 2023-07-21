@@ -1,13 +1,20 @@
 import hashlib
 import hmac
 import json
-
+from six import reraise as raise_ 
 
 from .compat import constant_time_compare, string_types
 from .exceptions import InvalidKeyError
 from .utils import (
-    base64url_decode, base64url_encode, der_to_raw_signature,
-    force_bytes, force_unicode, from_base64url_uint, raw_to_der_signature,
+    base64url_decode, 
+    base64url_encode, 
+    der_to_raw_signature,
+    force_bytes, 
+    force_unicode, 
+    from_base64url_uint, 
+    is_pem_format,
+    is_ssh_key,
+    raw_to_der_signature,
     to_base64url_uint
 )
 
@@ -139,14 +146,7 @@ class HMACAlgorithm(Algorithm):
     def prepare_key(self, key):
         key = force_bytes(key)
 
-        invalid_strings = [
-            b'-----BEGIN PUBLIC KEY-----',
-            b'-----BEGIN CERTIFICATE-----',
-            b'-----BEGIN RSA PUBLIC KEY-----',
-            b'ssh-rsa'
-        ]
-
-        if any([string_value in key for string_value in invalid_strings]):
+        if is_pem_format(key) or is_ssh_key(key):
             raise InvalidKeyError(
                 'The specified key is an asymmetric key or x509 certificate and'
                 ' should not be used as an HMAC secret.')
@@ -401,3 +401,145 @@ if has_crypto:
                 return True
             except InvalidSignature:
                 return False
+
+    class OKPAlgorithm(Algorithm):
+        """
+        Performs signing and verification operations using EdDSA
+
+        This class requires ``cryptography>=2.6`` to be installed.
+        """
+
+        def __init__(self, **kwargs):
+            pass
+
+        def prepare_key(self, key):
+            if isinstance(key, (bytes, str)):
+                if isinstance(key, str):
+                    key = key.encode("utf-8")
+                str_key = key.decode("utf-8")
+
+                if "-----BEGIN PUBLIC" in str_key:
+                    key = load_pem_public_key(key)
+                elif "-----BEGIN PRIVATE" in str_key:
+                    key = load_pem_private_key(key, password=None)
+                elif str_key[0:4] == "ssh-":
+                    key = load_ssh_public_key(key)
+
+            # Explicit check the key to prevent confusing errors from cryptography
+            if not isinstance(
+                key,
+                (Ed25519PrivateKey, Ed25519PublicKey, Ed448PrivateKey, Ed448PublicKey),
+            ):
+                raise InvalidKeyError(
+                    "Expecting a EllipticCurvePrivateKey/EllipticCurvePublicKey. Wrong key provided for EdDSA algorithms"
+                )
+
+            return key
+
+        def sign(self, msg, key):
+            """
+            Sign a message ``msg`` using the EdDSA private key ``key``
+            :param str|bytes msg: Message to sign
+            :param Ed25519PrivateKey}Ed448PrivateKey key: A :class:`.Ed25519PrivateKey`
+                or :class:`.Ed448PrivateKey` iinstance
+            :return bytes signature: The signature, as bytes
+            """
+            msg = bytes(msg, "utf-8") if type(msg) is not bytes else msg
+            return key.sign(msg)
+
+        def verify(self, msg, key, sig):
+            """
+            Verify a given ``msg`` against a signature ``sig`` using the EdDSA key ``key``
+
+            :param str|bytes sig: EdDSA signature to check ``msg`` against
+            :param str|bytes msg: Message to sign
+            :param Ed25519PrivateKey|Ed25519PublicKey|Ed448PrivateKey|Ed448PublicKey key:
+                A private or public EdDSA key instance
+            :return bool verified: True if signature is valid, False if not.
+            """
+            try:
+                msg = bytes(msg, "utf-8") if type(msg) is not bytes else msg
+                sig = bytes(sig, "utf-8") if type(sig) is not bytes else sig
+
+                if isinstance(key, (Ed25519PrivateKey, Ed448PrivateKey)):
+                    key = key.public_key()
+                key.verify(sig, msg)
+                return True  # If no exception was raised, the signature is valid.
+            except cryptography.exceptions.InvalidSignature:
+                return False
+
+        @staticmethod
+        def to_jwk(key):
+            if isinstance(key, (Ed25519PublicKey, Ed448PublicKey)):
+                x = key.public_bytes(
+                    encoding=Encoding.Raw,
+                    format=PublicFormat.Raw,
+                )
+                crv = "Ed25519" if isinstance(key, Ed25519PublicKey) else "Ed448"
+                return json.dumps(
+                    {
+                        "x": base64url_encode(force_bytes(x)).decode(),
+                        "kty": "OKP",
+                        "crv": crv,
+                    }
+                )
+
+            if isinstance(key, (Ed25519PrivateKey, Ed448PrivateKey)):
+                d = key.private_bytes(
+                    encoding=Encoding.Raw,
+                    format=PrivateFormat.Raw,
+                    encryption_algorithm=NoEncryption(),
+                )
+
+                x = key.public_key().public_bytes(
+                    encoding=Encoding.Raw,
+                    format=PublicFormat.Raw,
+                )
+
+                crv = "Ed25519" if isinstance(key, Ed25519PrivateKey) else "Ed448"
+                return json.dumps(
+                    {
+                        "x": base64url_encode(force_bytes(x)).decode(),
+                        "d": base64url_encode(force_bytes(d)).decode(),
+                        "kty": "OKP",
+                        "crv": crv,
+                    }
+                )
+
+            raise InvalidKeyError("Not a public or private key")
+
+        @staticmethod
+        def from_jwk(jwk):
+            try:
+                if isinstance(jwk, str):
+                    obj = json.loads(jwk)
+                elif isinstance(jwk, dict):
+                    obj = jwk
+                else:
+                    raise ValueError
+            except ValueError:
+                raise InvalidKeyError("Key is not valid JSON")
+
+            if obj.get("kty") != "OKP":
+                raise InvalidKeyError("Not an Octet Key Pair")
+
+            curve = obj.get("crv")
+            if curve != "Ed25519" and curve != "Ed448":
+                raise InvalidKeyError("Invalid curve: %s" % curve)
+
+            if "x" not in obj:
+                raise InvalidKeyError('OKP should have "x" parameter')
+            x = base64url_decode(obj.get("x"))
+
+            try:
+                if "d" not in obj:
+                    if curve == "Ed25519":
+                        return Ed25519PublicKey.from_public_bytes(x)
+                    return Ed448PublicKey.from_public_bytes(x)
+                d = base64url_decode(obj.get("d"))
+                if curve == "Ed25519":
+                    return Ed25519PrivateKey.from_private_bytes(d)
+                return Ed448PrivateKey.from_private_bytes(d)
+            except ValueError as err:
+                # raise InvalidKeyError("Invalid key parameter") from err
+                raise_(InvalidKeyError, "Invalid key parameter", err)
