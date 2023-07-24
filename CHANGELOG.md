@@ -12,6 +12,14 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+[v1.7.1.1][1.7.1.1]
+-------------------------------------------------------------------------
+
+### Security
+
+- [CVE-2022-29217] Prevent key confusion through non-blocklisted public key formats. https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffqj-6fqr-9h24
+
+
 [v1.7.1][1.7.1]
 -------------------------------------------------------------------------
 
