@@ -12,6 +12,20 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+[v1.7.1+security.2][1.7.1+security.2]
+-------------------------------------------------------------------------
+
+### Security
+
+- [CVE-2026-32597] Reject JWT tokens containing unknown `crit` (Critical) header
+  extensions per RFC 7515 §4.1.11. PyJWT previously accepted tokens with unknown
+  critical extensions instead of rejecting them, enabling split-brain verification
+  attacks in mixed-library deployments. https://github.com/advisories/GHSA-752w-5fwx-jx9f
+
+- [CVE-2022-29217] Prevent key confusion through non-blocklisted public key formats
+  (included from v1.7.1.1). https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffqj-6fqr-9h24
+
+
 [v1.7.1.1][1.7.1.1]
 -------------------------------------------------------------------------
 
