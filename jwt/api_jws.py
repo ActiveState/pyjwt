@@ -233,7 +233,7 @@ class PyJWS(object):
 
     def _validate_crit(self, headers):
         # Backport of CVE-2026-32597 (GHSA-752w-5fwx-jx9f):
-        # RFC 7515 §4.1.11 requires that unknown critical extensions MUST
+        # RFC 7515 section 4.1.11 requires that unknown critical extensions MUST
         # cause the token to be rejected.
         crit = headers.get('crit')
         if not isinstance(crit, list) or len(crit) == 0:
@@ -249,7 +249,7 @@ class PyJWS(object):
                 )
 
     # Set of critical extensions this implementation understands.
-    # Empty by default — any crit token will be rejected unless an
+    # Empty by default - any crit token will be rejected unless an
     # extension is explicitly added here by a subclass.
     _valid_crit = set()
 
