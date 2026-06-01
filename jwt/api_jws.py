@@ -155,8 +155,6 @@ class PyJWS(object):
             self._verify_signature(payload, signing_input, header, signature,
                                    key, algorithms)
 
-        self._validate_headers(header)
-
         return payload
 
     def get_unverified_header(self, jwt):
