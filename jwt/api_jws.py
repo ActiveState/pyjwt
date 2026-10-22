@@ -1,5 +1,6 @@
 import binascii
 import json
+import re
 import warnings
 try:
     # import required by mypy to perform type checking, not used for normal execution
@@ -16,6 +17,8 @@ from .exceptions import (
     InvalidTokenError
 )
 from .utils import base64url_decode, base64url_encode, force_bytes, merge_dict
+
+_BASE64URL_RE = re.compile(br'[A-Za-z0-9_-]*\Z')
 
 
 class PyJWS(object):
@@ -170,6 +173,24 @@ class PyJWS(object):
 
         return headers
 
+    @staticmethod
+    def _decode_base64url_segment(segment, name):
+        # Only accept the canonical unpadded Base64URL encoding, so a token
+        # has exactly one serialization. Python's decoder otherwise skips
+        # characters outside the alphabet.
+        if len(segment) % 4 == 1 or not _BASE64URL_RE.match(segment):
+            raise DecodeError('Invalid {0} padding'.format(name))
+
+        try:
+            decoded = base64url_decode(segment)
+        except (TypeError, binascii.Error):
+            raise DecodeError('Invalid {0} padding'.format(name))
+
+        if base64url_encode(decoded) != segment:
+            raise DecodeError('Invalid {0} padding'.format(name))
+
+        return decoded
+
     def _load(self, jwt):
         if isinstance(jwt, text_type):
             jwt = jwt.encode('utf-8')
@@ -184,10 +205,7 @@ class PyJWS(object):
         except ValueError:
             raise DecodeError('Not enough segments')
 
-        try:
-            header_data = base64url_decode(header_segment)
-        except (TypeError, binascii.Error):
-            raise DecodeError('Invalid header padding')
+        header_data = self._decode_base64url_segment(header_segment, 'header')
 
         try:
             header = json.loads(header_data.decode('utf-8'))
@@ -197,15 +215,9 @@ class PyJWS(object):
         if not isinstance(header, Mapping):
             raise DecodeError('Invalid header string: must be a json object')
 
-        try:
-            payload = base64url_decode(payload_segment)
-        except (TypeError, binascii.Error):
-            raise DecodeError('Invalid payload padding')
+        payload = self._decode_base64url_segment(payload_segment, 'payload')
 
-        try:
-            signature = base64url_decode(crypto_segment)
-        except (TypeError, binascii.Error):
-            raise DecodeError('Invalid crypto padding')
+        signature = self._decode_base64url_segment(crypto_segment, 'crypto')
 
         return (payload, signing_input, header, signature)
 

@@ -36,6 +36,16 @@ def payload():
     return force_bytes('hello world')
 
 
+_B64URL = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+
+
+def _flip_unused_trailing_bit(sig):
+    # An HS256 signature is 32 bytes, so the last of its 43 characters has
+    # two unused low bits. Setting one keeps the decoded bytes identical.
+    index = _B64URL.index(sig[-1:]) ^ 1
+    return sig[:-1] + _B64URL[index:index + 1]
+
+
 class TestJWS:
     def test_register_algo_does_not_allow_duplicate_registration(self, jws):
         jws.register_algorithm('AAA', Algorithm())
@@ -413,6 +423,34 @@ class TestJWS:
             jws.decode(example_jws, example_secret)
 
         assert 'Invalid crypto padding' in str(exc.value)
+
+    @pytest.mark.parametrize('mutate', [
+        lambda sig: sig + b'!!!!',           # characters outside the alphabet
+        lambda sig: sig + b'=',              # padding
+        _flip_unused_trailing_bit,
+    ])
+    def test_decode_rejects_non_canonical_crypto_segment(self, jws, payload,
+                                                          mutate):
+        secret = 'a' * 32
+        token = jws.encode(payload, secret, algorithm='HS256')
+        header, encoded_payload, signature = token.split(b'.')
+        mutated_token = b'.'.join((header, encoded_payload, mutate(signature)))
+
+        with pytest.raises(DecodeError, match='Invalid crypto padding'):
+            jws.decode(mutated_token, secret, algorithms=['HS256'])
+
+    def test_decode_rejects_non_canonical_header_and_payload(self, jws, payload):
+        secret = 'a' * 32
+        header, encoded_payload, signature = jws.encode(
+            payload, secret, algorithm='HS256').split(b'.')
+
+        with pytest.raises(DecodeError, match='Invalid header padding'):
+            jws.decode(b'.'.join((header + b'!', encoded_payload, signature)),
+                       secret, algorithms=['HS256'])
+
+        with pytest.raises(DecodeError, match='Invalid payload padding'):
+            jws.decode(b'.'.join((header, encoded_payload + b'!', signature)),
+                       secret, algorithms=['HS256'])
 
     def test_decode_with_algo_none_should_fail(self, jws, payload):
         jws_message = jws.encode(payload, key=None, algorithm=None)
