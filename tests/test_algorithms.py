@@ -589,7 +589,10 @@ class TestAlgorithmsRFC7520:
         assert result
 
 
-@crypto_required
+# OKPAlgorithm (EdDSA) came in with the CVE-2022-29217 backport but is not
+# registered in get_default_algorithms() and its key fixtures were never
+# added; EdDSA is not supported on the 1.7.1 line.
+@pytest.mark.skip(reason='EdDSA (OKPAlgorithm) is not supported on 1.7.1')
 class TestOKPAlgorithms:
     hello_world_sig = b"Qxa47mk/azzUgmY2StAOguAd4P7YBLpyCfU3JdbaiWnXM4o4WibXwmIHvNYgN3frtE2fcyd8OYEaOiD/KiwkCg=="
     hello_world = b"Hello World!"
