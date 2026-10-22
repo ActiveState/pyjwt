@@ -1,5 +1,8 @@
+import time
+
 from jwt.utils import (
-    force_bytes, force_unicode, from_base64url_uint, to_base64url_uint
+    force_bytes, force_unicode, from_base64url_uint, is_pem_format,
+    to_base64url_uint
 )
 
 import pytest
@@ -38,3 +41,18 @@ def test_force_unicode_raises_error_on_invalid_object():
 def test_force_bytes_raises_error_on_invalid_object():
     with pytest.raises(TypeError):
         force_bytes({})
+
+
+def test_is_pem_format_is_linear_on_unterminated_begin_markers():
+    # GHSA-jwrc-g2q2-pq5p: the old backtracking regex rescanned the input
+    # once per BEGIN line, taking seconds at this size.
+    start = time.time()
+    assert not is_pem_format(b'-----BEGIN CERTIFICATE-----\n' * 20000)
+    assert time.time() - start < 1
+
+
+def test_is_pem_format_requires_matching_labels():
+    assert not is_pem_format(
+        b'-----BEGIN PUBLIC KEY-----\nAAAA\n-----END CERTIFICATE-----\n')
+    assert is_pem_format(
+        b'-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n')

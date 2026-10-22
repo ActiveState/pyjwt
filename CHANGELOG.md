@@ -12,6 +12,65 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+[v1.7.1.post5][1.7.1.post5]
+-------------------------------------------------------------------------
+
+ActiveState security release. From this release on, the 1.7.1 line uses
+PEP 440 post-release versions (`1.7.1.postN`) instead of the
+`1.7.1+security.N` local version label.
+
+### Security
+
+- [CVE-2026-102268] (Critical) Recognise PEM keys with tabs or spaces before
+  the markers, CR-only line endings, or folded onto one line. The check that
+  stops an asymmetric key being used as an HMAC secret (CVE-2022-29217) missed
+  these forms, which cryptography can still load, so a verifier allowing both
+  HS256 and an asymmetric algorithm accepted HS256 tokens signed with the
+  public key. https://github.com/advisories/GHSA-ffc3-869f-jxw9
+- [CVE-2026-102270] Fix quadratic run time (ReDoS) in PEM detection on input
+  with many unterminated `BEGIN` markers.
+  https://github.com/advisories/GHSA-jwrc-g2q2-pq5p
+- [CVE-2026-48526] Reject a JWK passed as JSON text as an HMAC secret. Load
+  symmetric JWKs with `HMACAlgorithm.from_jwk` instead.
+  https://github.com/advisories/GHSA-xgmm-8j9v-c9wx
+- [CVE-2026-102269] Reject token segments that are not canonical unpadded
+  Base64URL. Characters outside the alphabet (e.g. a signature with `!!!!`
+  appended), `=` padding and set unused trailing bits now raise `DecodeError`
+  instead of being silently ignored, so each token has exactly one
+  serialization. Tokens that relied on that leniency are no longer accepted.
+  https://github.com/advisories/GHSA-hxm8-2xgr-2p9m
+
+### Not affected
+
+- [CVE-2026-101917] and [CVE-2026-102267] affect `PyJWKClient`, which does not
+  exist in 1.7.1.
+
+### Fixed
+
+- `tests/test_algorithms.py` failed to collect since 1.7.1.1; the unsupported
+  EdDSA tests are now skipped.
+
+
+[v1.7.1+security.4][1.7.1+security.4]
+-------------------------------------------------------------------------
+
+### Security
+
+- [CVE-2026-32597] Complete the fix from 1.7.1+security.2: `decode()` now
+  validates the `crit` header. Previously only `get_unverified_header()` did,
+  so tokens with unknown critical extensions were still accepted on decode.
+  https://github.com/advisories/GHSA-752w-5fwx-jx9f
+
+
+[v1.7.1+security.3][1.7.1+security.3]
+-------------------------------------------------------------------------
+
+### Fixed
+
+- Fix a `SyntaxError` on Python 2.7 caused by non-ASCII characters in comments
+  in `jwt/api_jws.py`.
+
+
 [v1.7.1+security.2][1.7.1+security.2]
 -------------------------------------------------------------------------
 
@@ -256,6 +315,11 @@ rarely used. Users affected by this should upgrade to 3.3+.
 [1.6.4]: https://github.com/jpadilla/pyjwt/compare/1.6.3...1.6.4
 [1.7.0]: https://github.com/jpadilla/pyjwt/compare/1.6.4...1.7.0
 [1.7.1]: https://github.com/jpadilla/pyjwt/compare/1.7.0...1.7.1
+[1.7.1.1]: https://github.com/ActiveState/pyjwt/compare/1.7.1...1.7.1.1
+[1.7.1+security.2]: https://github.com/ActiveState/pyjwt/compare/1.7.1.1...1.7.1.2
+[1.7.1+security.3]: https://github.com/ActiveState/pyjwt/compare/1.7.1.2...1.7.1.3
+[1.7.1+security.4]: https://github.com/ActiveState/pyjwt/compare/1.7.1.3...1.7.1.4
+[1.7.1.post5]: https://github.com/ActiveState/pyjwt/compare/1.7.1.4...1.7.1.post5
 
 [109]: https://github.com/jpadilla/pyjwt/pull/109
 [110]: https://github.com/jpadilla/pyjwt/pull/110
@@ -309,3 +373,11 @@ rarely used. Users affected by this should upgrade to 3.3+.
 [384]: https://github.com/jpadilla/pyjwt/pull/384
 [7c1e61d]: https://github.com/jpadilla/pyjwt/commit/7c1e61dde27bafe16e7d1bb6e35199e778962742
 [7ca41e]: https://github.com/jpadilla/pyjwt/commit/7ca41e53b3d7d9f5cd31bdd8a2b832d192006239
+[CVE-2022-29217]: https://nvd.nist.gov/vuln/detail/CVE-2022-29217
+[CVE-2026-32597]: https://nvd.nist.gov/vuln/detail/CVE-2026-32597
+[CVE-2026-48526]: https://nvd.nist.gov/vuln/detail/CVE-2026-48526
+[CVE-2026-101917]: https://nvd.nist.gov/vuln/detail/CVE-2026-101917
+[CVE-2026-102267]: https://nvd.nist.gov/vuln/detail/CVE-2026-102267
+[CVE-2026-102268]: https://nvd.nist.gov/vuln/detail/CVE-2026-102268
+[CVE-2026-102269]: https://nvd.nist.gov/vuln/detail/CVE-2026-102269
+[CVE-2026-102270]: https://nvd.nist.gov/vuln/detail/CVE-2026-102270

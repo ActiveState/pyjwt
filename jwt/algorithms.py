@@ -151,6 +151,23 @@ class HMACAlgorithm(Algorithm):
                 'The specified key is an asymmetric key or x509 certificate and'
                 ' should not be used as an HMAC secret.')
 
+        # Defense against algorithm-confusion attacks: an attacker with
+        # control over the token header can force this code path by setting
+        # alg=HS*, and HMACAlgorithm is the only algorithm that accepts
+        # arbitrary bytes as a valid secret. Even a symmetric (kty=oct) JWK
+        # should be loaded via HMACAlgorithm.from_jwk rather than fed as raw
+        # JSON bytes (whose contents are not the secret material).
+        if key.lstrip().startswith(b'{'):
+            try:
+                jwk_obj = json.loads(key.decode('utf-8'))
+            except ValueError:
+                jwk_obj = None
+            if isinstance(jwk_obj, dict) and 'kty' in jwk_obj:
+                raise InvalidKeyError(
+                    'The specified key looks like a JWK and should not be'
+                    ' used directly as an HMAC secret. Load it via'
+                    ' HMACAlgorithm.from_jwk first.')
+
         return key
 
     @staticmethod

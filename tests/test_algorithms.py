@@ -104,6 +104,65 @@ class TestAlgorithms:
             with open(key_path('testkey_pkcs1.pub.pem'), 'r') as keyfile:
                 algo.prepare_key(keyfile.read())
 
+    @pytest.mark.parametrize('mutation', [
+        lambda key: key.replace(b'-----END', b'\t-----END'),
+        lambda key: key.replace(b'\n', b'\r'),
+        lambda key: key.replace(b'\n', b''),
+    ])
+    def test_hmac_should_reject_loader_accepted_pem_mutations(self, mutation):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        with open(key_path('testkey2_rsa.pub.pem'), 'rb') as keyfile:
+            mutated_key = mutation(keyfile.read())
+
+        with pytest.raises(InvalidKeyError):
+            algo.prepare_key(mutated_key)
+
+    def test_hmac_should_accept_incomplete_pem_marker(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        key = b'-----BEGIN PUBLIC KEY-----' * 10000
+
+        assert algo.prepare_key(key) == key
+
+    def test_hmac_should_reject_a_later_pem_block(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        with open(key_path('testkey2_rsa.pub.pem'), 'rb') as keyfile:
+            key = b'-----BEGIN PUBLIC KEY-----' + keyfile.read()
+
+        with pytest.raises(InvalidKeyError):
+            algo.prepare_key(key)
+
+    def test_hmac_should_reject_a_pem_block_after_an_overlapping_end_marker(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        with open(key_path('testkey2_rsa.pub.pem'), 'rb') as keyfile:
+            key = b'-----END CERTIFICATE' + keyfile.read()
+
+        with pytest.raises(InvalidKeyError):
+            algo.prepare_key(key)
+
+    @pytest.mark.parametrize('jwk_file', [
+        'jwk_rsa_pub.json',
+        'jwk_ec_pub.json',
+        'jwk_hmac.json',
+    ])
+    def test_hmac_prepare_key_rejects_jwk_json(self, jwk_file):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+
+        with open(key_path(jwk_file)) as keyfile:
+            with pytest.raises(InvalidKeyError, match='looks like a JWK'):
+                algo.prepare_key(keyfile.read())
+
+    def test_hmac_prepare_key_accepts_json_without_kty(self):
+        # JSON that doesn't look like a JWK (no "kty") should not be misclassified.
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+
+        key = algo.prepare_key('{"this": "is just a json-shaped secret"}')
+        assert key == b'{"this": "is just a json-shaped secret"}'
+
+    def test_hmac_prepare_key_accepts_non_utf8_brace_key(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+
+        assert algo.prepare_key(b'{\xff\xfe') == b'{\xff\xfe'
+
     def test_hmac_jwk_should_parse_and_verify(self):
         algo = HMACAlgorithm(HMACAlgorithm.SHA256)
 
@@ -589,7 +648,10 @@ class TestAlgorithmsRFC7520:
         assert result
 
 
-@crypto_required
+# OKPAlgorithm (EdDSA) came in with the CVE-2022-29217 backport but is not
+# registered in get_default_algorithms() and its key fixtures were never
+# added; EdDSA is not supported on the 1.7.1 line.
+@pytest.mark.skip(reason='EdDSA (OKPAlgorithm) is not supported on 1.7.1')
 class TestOKPAlgorithms:
     hello_world_sig = b"Qxa47mk/azzUgmY2StAOguAd4P7YBLpyCfU3JdbaiWnXM4o4WibXwmIHvNYgN3frtE2fcyd8OYEaOiD/KiwkCg=="
     hello_world = b"Hello World!"
