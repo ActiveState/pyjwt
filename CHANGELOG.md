@@ -12,6 +12,32 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+[v1.7.1.post6][1.7.1.post6]
+-------------------------------------------------------------------------
+
+ActiveState security release.
+
+### Security
+
+- [GHSA-pxh4-856f-4h89] (High) Reject an empty HMAC key.
+  `HMACAlgorithm.from_jwk` returned an empty key for an `oct` JWK with
+  `"k": ""`, and HS256/384/512 then accepted any token signed with the empty
+  key. `from_jwk` now raises `InvalidKeyError` for an `oct` JWK whose `k` is
+  empty or missing, and so does `HMACAlgorithm.prepare_key` for an empty
+  `str`/`bytes` secret.
+  https://github.com/advisories/GHSA-pxh4-856f-4h89
+
+  **Behaviour change:** `encode()` with an empty HMAC secret now raises
+  `InvalidKeyError`. `decode()` with an empty or missing secret raises
+  `InvalidSignatureError` (a `DecodeError`), as it did before, without
+  computing a signature.
+
+### Fixed
+
+- Declare `six` in `install_requires`. `jwt/algorithms.py` has imported it
+  since 1.7.1.1.
+
+
 [v1.7.1.post5][1.7.1.post5]
 -------------------------------------------------------------------------
 
@@ -320,6 +346,7 @@ rarely used. Users affected by this should upgrade to 3.3+.
 [1.7.1+security.3]: https://github.com/ActiveState/pyjwt/compare/1.7.1.2...1.7.1.3
 [1.7.1+security.4]: https://github.com/ActiveState/pyjwt/compare/1.7.1.3...1.7.1.4
 [1.7.1.post5]: https://github.com/ActiveState/pyjwt/compare/1.7.1.4...1.7.1.post5
+[1.7.1.post6]: https://github.com/ActiveState/pyjwt/compare/1.7.1.post5...1.7.1.post6
 
 [109]: https://github.com/jpadilla/pyjwt/pull/109
 [110]: https://github.com/jpadilla/pyjwt/pull/110
