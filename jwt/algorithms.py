@@ -1,3 +1,4 @@
+import codecs
 import hashlib
 import hmac
 import json
@@ -133,6 +134,39 @@ class NoneAlgorithm(Algorithm):
         return False
 
 
+def _detect_json_encoding(b):
+    # Port of Python 3's json.detect_encoding (RFC 8259 section 8.1, plus
+    # BOMs), which Python 2's json lacks.
+    if b.startswith((codecs.BOM_UTF32_BE, codecs.BOM_UTF32_LE)):
+        return 'utf-32'
+    if b.startswith((codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE)):
+        return 'utf-16'
+    if b.startswith(codecs.BOM_UTF8):
+        return 'utf-8-sig'
+    head = bytearray(b[:4])
+    if len(head) >= 4:
+        if not head[0]:
+            return 'utf-16-be' if head[1] else 'utf-32-be'
+        if not head[1]:
+            return 'utf-16-le' if head[2] or head[3] else 'utf-32-le'
+    elif len(head) == 2:
+        if not head[0]:
+            return 'utf-16-be'
+        if not head[1]:
+            return 'utf-16-le'
+    return 'utf-8'
+
+
+def _decode_json_text(b):
+    # Only used to recognise a JWK, never as key material, so undecodable
+    # sequences are replaced rather than failing (Python 2 has no
+    # surrogatepass handler, and its UTF-16 codec rejects lone surrogates).
+    try:
+        return b.decode(_detect_json_encoding(b), 'replace')
+    except (UnicodeError, LookupError):
+        return u''
+
+
 class HMACAlgorithm(Algorithm):
     """
     Performs signing and verification operations using HMAC
@@ -182,17 +216,28 @@ class HMACAlgorithm(Algorithm):
         # alg=HS*, and HMACAlgorithm is the only algorithm that accepts
         # arbitrary bytes as a valid secret. Even a symmetric (kty=oct) JWK
         # should be loaded via HMACAlgorithm.from_jwk rather than fed as raw
-        # JSON bytes (whose contents are not the secret material).
-        if key.lstrip().startswith(b'{'):
-            try:
-                jwk_obj = json.loads(key.decode('utf-8'))
-            except ValueError:
-                jwk_obj = None
-            if isinstance(jwk_obj, dict) and 'kty' in jwk_obj:
+        # JSON bytes (whose contents are not the secret material). Decode
+        # the way JSON allows (UTF-8 with or without a BOM, UTF-16, UTF-32)
+        # so a re-encoded JWK is still recognised.
+        key_text = _decode_json_text(key)
+        try:
+            jwk_obj = json.loads(key_text)
+        except RuntimeError:
+            # Nested too deep to parse (RecursionError on Python 3). A
+            # top-level object is treated as a JWK rather than accepted.
+            if key_text.lstrip(u'\ufeff \t\r\n').startswith(u'{'):
                 raise InvalidKeyError(
                     'The specified key looks like a JWK and should not be'
                     ' used directly as an HMAC secret. Load it via'
                     ' HMACAlgorithm.from_jwk first.')
+            jwk_obj = None
+        except ValueError:
+            jwk_obj = None
+        if isinstance(jwk_obj, dict) and 'kty' in jwk_obj:
+            raise InvalidKeyError(
+                'The specified key looks like a JWK and should not be'
+                ' used directly as an HMAC secret. Load it via'
+                ' HMACAlgorithm.from_jwk first.')
 
         return key
 
