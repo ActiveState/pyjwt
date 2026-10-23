@@ -1,14 +1,18 @@
 
+import hashlib
+import hmac
 import json
 from decimal import Decimal
 
 from jwt.algorithms import Algorithm
 from jwt.api_jws import PyJWS
 from jwt.exceptions import (
-    DecodeError, InvalidAlgorithmError, InvalidSignatureError,
+    DecodeError, InvalidAlgorithmError, InvalidKeyError, InvalidSignatureError,
     InvalidTokenError
 )
-from jwt.utils import base64url_decode, force_bytes, force_unicode
+from jwt.utils import (
+    base64url_decode, base64url_encode, force_bytes, force_unicode
+)
 
 import pytest
 
@@ -101,6 +105,34 @@ class TestJWS:
         decoded_payload = jws.decode(jws_message, secret)
 
         assert decoded_payload == payload
+
+    @pytest.mark.parametrize('alg,hash_alg', [
+        ('HS256', hashlib.sha256),
+        ('HS384', hashlib.sha384),
+        ('HS512', hashlib.sha512),
+    ])
+    def test_decode_rejects_token_forged_with_empty_hmac_key(self, jws, alg,
+                                                             hash_alg):
+        # GHSA-pxh4-856f-4h89: an empty HMAC key (e.g. from an oct JWK with
+        # "k": "") must not verify a token anyone can compute.
+        header = json.dumps({'alg': alg, 'typ': 'JWT'})
+        signing_input = b'.'.join([
+            base64url_encode(force_bytes(header)),
+            base64url_encode(b'{"sub":"admin"}'),
+        ])
+        signature = hmac.new(b'', signing_input, hash_alg).digest()
+        forged = signing_input + b'.' + base64url_encode(signature)
+
+        for key in ('', b'', None):
+            with pytest.raises(InvalidSignatureError):
+                jws.decode(forged, key, algorithms=[alg])
+
+        with pytest.raises(InvalidSignatureError):
+            jws.decode(forged, algorithms=[alg])
+
+    def test_encode_rejects_empty_hmac_key(self, jws, payload):
+        with pytest.raises(InvalidKeyError):
+            jws.encode(payload, '', algorithm='HS256')
 
     def test_decode_fails_when_alg_is_not_on_method_algorithms_param(self, jws, payload):
         secret = 'secret'

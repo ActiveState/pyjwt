@@ -185,6 +185,23 @@ class TestAlgorithms:
             with pytest.raises(InvalidKeyError):
                 algo.from_jwk(keyfile.read())
 
+    @pytest.mark.parametrize('key', ['', b'', u''])
+    def test_hmac_prepare_key_rejects_empty_key(self, key):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+
+        with pytest.raises(InvalidKeyError, match='must not be empty'):
+            algo.prepare_key(key)
+
+    @pytest.mark.parametrize('jwk', [
+        '{"kty": "oct", "k": ""}',
+        '{"kty": "oct"}',
+    ])
+    def test_hmac_from_jwk_rejects_empty_or_missing_k(self, jwk):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+
+        with pytest.raises(InvalidKeyError, match='must not be empty'):
+            algo.from_jwk(jwk)
+
     @pytest.mark.skipif(not has_crypto, reason='Not supported without cryptography library')
     def test_rsa_should_parse_pem_public_key(self):
         algo = RSAAlgorithm(RSAAlgorithm.SHA256)

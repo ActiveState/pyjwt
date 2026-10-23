@@ -146,6 +146,9 @@ class HMACAlgorithm(Algorithm):
     def prepare_key(self, key):
         key = force_bytes(key)
 
+        if len(key) == 0:
+            raise InvalidKeyError('HMAC key must not be empty.')
+
         if is_pem_format(key) or is_ssh_key(key):
             raise InvalidKeyError(
                 'The specified key is an asymmetric key or x509 certificate and'
@@ -184,7 +187,14 @@ class HMACAlgorithm(Algorithm):
         if obj.get('kty') != 'oct':
             raise InvalidKeyError('Not an HMAC key')
 
-        return base64url_decode(obj['k'])
+        if 'k' not in obj:
+            raise InvalidKeyError('HMAC key must not be empty.')
+
+        key = base64url_decode(obj['k'])
+        if len(key) == 0:
+            raise InvalidKeyError('HMAC key must not be empty.')
+
+        return key
 
     def sign(self, msg, key):
         return hmac.new(key, msg, self.hash_alg).digest()
