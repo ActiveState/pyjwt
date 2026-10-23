@@ -15,10 +15,24 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 [v1.7.1.post6][1.7.1.post6]
 -------------------------------------------------------------------------
 
-ActiveState security release.
+ActiveState security release. HMAC keys that are really public key
+material are now rejected in every form upstream 2.14.0 rejects, and an
+empty HMAC key is rejected.
 
 ### Security
 
+- [CVE-2026-102271] (High) Reject a public key or X.509 certificate in DER
+  form as an HMAC secret. The CVE-2022-29217 guard only recognised PEM and
+  SSH text, so a DER key bypassed it.
+  https://github.com/advisories/GHSA-p4g4-x82p-q773
+- [CVE-2026-102272] (High) Recognise a JWK as an HMAC key whatever its JSON
+  encoding: a UTF-8 BOM, UTF-16 or UTF-32 no longer gets a public JWK past
+  the CVE-2026-48526 check. A JSON object nested too deep to parse is
+  rejected.
+  https://github.com/advisories/GHSA-r6x4-923q-g947
+- [CVE-2026-102273] (High) Reject a public JWK inside a container, such as a
+  JWKS (`{"keys": [...]}`) or an array, as an HMAC key.
+  https://github.com/advisories/GHSA-w2cx-738m-mc7w
 - [GHSA-pxh4-856f-4h89] (High) Reject an empty HMAC key.
   `HMACAlgorithm.from_jwk` returned an empty key for an `oct` JWK with
   `"k": ""`, and HS256/384/512 then accepted any token signed with the empty
@@ -30,7 +44,9 @@ ActiveState security release.
   **Behaviour change:** `encode()` with an empty HMAC secret now raises
   `InvalidKeyError`. `decode()` with an empty or missing secret raises
   `InvalidSignatureError` (a `DecodeError`), as it did before, without
-  computing a signature.
+  computing a signature. An HMAC secret that parses as DER key material, or
+  as JSON containing an object with a `kty` member, is now rejected with
+  `InvalidKeyError`.
 
 ### Fixed
 
