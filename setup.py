@@ -67,6 +67,8 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Topic :: Utilities',
     ],
+    # jwt/algorithms.py imports six (from the CVE-2022-29217 backport).
+    install_requires=['six'],
     test_suite='tests',
     setup_requires=pytest_runner,
     tests_require=tests_require,
