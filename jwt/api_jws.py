@@ -9,7 +9,8 @@ except ImportError:
     pass
 
 from .algorithms import (
-    Algorithm, get_default_algorithms, has_crypto, requires_cryptography  # NOQA
+    Algorithm, HMACAlgorithm, get_default_algorithms, has_crypto,  # NOQA
+    requires_cryptography
 )
 from .compat import Mapping, binary_type, string_types, text_type
 from .exceptions import (
@@ -231,6 +232,15 @@ class PyJWS(object):
 
         try:
             alg_obj = self._algorithms[alg]
+
+            # An empty HMAC secret verifies tokens anyone can forge
+            # (GHSA-pxh4-856f-4h89). prepare_key rejects it with
+            # InvalidKeyError; decode() keeps raising a DecodeError here, as
+            # it always has for a missing secret, so callers catching
+            # InvalidTokenError still do.
+            if isinstance(alg_obj, HMACAlgorithm) and not key:
+                raise InvalidSignatureError('Signature verification failed')
+
             key = alg_obj.prepare_key(key)
 
             if not alg_obj.verify(signing_input, key, signature):
