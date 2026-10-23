@@ -21,8 +21,10 @@ from .utils import (
 try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.serialization import (
-        load_pem_private_key, load_pem_public_key, load_ssh_public_key
+        load_der_public_key, load_pem_private_key, load_pem_public_key,
+        load_ssh_public_key
     )
+    from cryptography.x509 import load_der_x509_certificate
     from cryptography.hazmat.primitives.asymmetric.rsa import (
         RSAPrivateKey, RSAPublicKey, RSAPrivateNumbers, RSAPublicNumbers,
         rsa_recover_prime_factors, rsa_crt_dmp1, rsa_crt_dmq1, rsa_crt_iqmp
@@ -32,7 +34,7 @@ try:
     )
     from cryptography.hazmat.primitives.asymmetric import ec, padding
     from cryptography.hazmat.backends import default_backend
-    from cryptography.exceptions import InvalidSignature
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 
     has_crypto = True
 except ImportError:
@@ -143,13 +145,34 @@ class HMACAlgorithm(Algorithm):
     def __init__(self, hash_alg):
         self.hash_alg = hash_alg
 
+    @staticmethod
+    def _is_der_key(key):
+        # A public key or certificate in DER form has no text marker for
+        # is_pem_format / is_ssh_key to find, so try to parse it.
+        if not has_crypto:
+            return False
+
+        try:
+            load_der_public_key(key, backend=default_backend())
+        except (TypeError, ValueError, UnsupportedAlgorithm):
+            pass
+        else:
+            return True
+
+        try:
+            load_der_x509_certificate(key, default_backend())
+        except (TypeError, ValueError, UnsupportedAlgorithm):
+            return False
+        else:
+            return True
+
     def prepare_key(self, key):
         key = force_bytes(key)
 
         if len(key) == 0:
             raise InvalidKeyError('HMAC key must not be empty.')
 
-        if is_pem_format(key) or is_ssh_key(key):
+        if is_pem_format(key) or is_ssh_key(key) or self._is_der_key(key):
             raise InvalidKeyError(
                 'The specified key is an asymmetric key or x509 certificate and'
                 ' should not be used as an HMAC secret.')

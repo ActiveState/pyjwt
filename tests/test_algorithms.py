@@ -13,6 +13,11 @@ from .utils import key_path
 try:
     from jwt.algorithms import RSAAlgorithm, ECAlgorithm, RSAPSSAlgorithm
     from .keys import load_rsa_pub_key, load_ec_pub_key
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, PublicFormat
+    )
+    from cryptography.x509 import load_pem_x509_certificate
     has_crypto = True
 except ImportError:
     has_crypto = False
@@ -162,6 +167,33 @@ class TestAlgorithms:
         algo = HMACAlgorithm(HMACAlgorithm.SHA256)
 
         assert algo.prepare_key(b'{\xff\xfe') == b'{\xff\xfe'
+
+    @pytest.mark.skipif(not has_crypto, reason='Not supported without cryptography library')
+    @pytest.mark.parametrize('key_format_name', ['SubjectPublicKeyInfo', 'PKCS1'])
+    def test_hmac_prepare_key_rejects_der_public_key(self, key_format_name):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        der_key = load_rsa_pub_key().public_bytes(
+            Encoding.DER, getattr(PublicFormat, key_format_name))
+
+        with pytest.raises(InvalidKeyError, match='asymmetric key'):
+            algo.prepare_key(der_key)
+
+    @pytest.mark.skipif(not has_crypto, reason='Not supported without cryptography library')
+    def test_hmac_prepare_key_rejects_der_certificate(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        with open(key_path('testkey_rsa.cer'), 'rb') as certificate_file:
+            certificate = load_pem_x509_certificate(
+                certificate_file.read(), default_backend())
+        der_certificate = certificate.public_bytes(Encoding.DER)
+
+        with pytest.raises(InvalidKeyError, match='x509 certificate'):
+            algo.prepare_key(der_certificate)
+
+    def test_hmac_prepare_key_accepts_non_key_binary_secret(self):
+        algo = HMACAlgorithm(HMACAlgorithm.SHA256)
+        secret = b'\x30\x82not-a-der-key'
+
+        assert algo.prepare_key(secret) == secret
 
     def test_hmac_jwk_should_parse_and_verify(self):
         algo = HMACAlgorithm(HMACAlgorithm.SHA256)
