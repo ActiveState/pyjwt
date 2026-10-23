@@ -1,3 +1,4 @@
+import codecs
 import hashlib
 import hmac
 import json
@@ -21,8 +22,10 @@ from .utils import (
 try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.serialization import (
-        load_pem_private_key, load_pem_public_key, load_ssh_public_key
+        load_der_public_key, load_pem_private_key, load_pem_public_key,
+        load_ssh_public_key
     )
+    from cryptography.x509 import load_der_x509_certificate
     from cryptography.hazmat.primitives.asymmetric.rsa import (
         RSAPrivateKey, RSAPublicKey, RSAPrivateNumbers, RSAPublicNumbers,
         rsa_recover_prime_factors, rsa_crt_dmp1, rsa_crt_dmq1, rsa_crt_iqmp
@@ -32,7 +35,7 @@ try:
     )
     from cryptography.hazmat.primitives.asymmetric import ec, padding
     from cryptography.hazmat.backends import default_backend
-    from cryptography.exceptions import InvalidSignature
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 
     has_crypto = True
 except ImportError:
@@ -131,6 +134,83 @@ class NoneAlgorithm(Algorithm):
         return False
 
 
+def _detect_json_encoding(b):
+    # Port of Python 3's json.detect_encoding (RFC 8259 section 8.1, plus
+    # BOMs), which Python 2's json lacks.
+    if b.startswith((codecs.BOM_UTF32_BE, codecs.BOM_UTF32_LE)):
+        return 'utf-32'
+    if b.startswith((codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE)):
+        return 'utf-16'
+    if b.startswith(codecs.BOM_UTF8):
+        return 'utf-8-sig'
+    head = bytearray(b[:4])
+    if len(head) >= 4:
+        if not head[0]:
+            return 'utf-16-be' if head[1] else 'utf-32-be'
+        if not head[1]:
+            return 'utf-16-le' if head[2] or head[3] else 'utf-32-le'
+    elif len(head) == 2:
+        if not head[0]:
+            return 'utf-16-be'
+        if not head[1]:
+            return 'utf-16-le'
+    return 'utf-8'
+
+
+def _decode_json_text(b):
+    # Only used to recognise a JWK, never as key material, so undecodable
+    # sequences are replaced rather than failing (Python 2 has no
+    # surrogatepass handler, and its UTF-16 codec rejects lone surrogates).
+    try:
+        return b.decode(_detect_json_encoding(b), 'replace')
+    except (UnicodeError, LookupError):
+        return u''
+
+
+def _has_kty_member(text):
+    # Scan JSON text too deep to parse for a member named "kty", decoding
+    # each member name so an escaped one ("\u006bty") is found too.
+    index = 0
+    while index < len(text):
+        if text[index] != u'"':
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text):
+            if text[end] == u'\\':
+                end += 2
+            elif text[end] == u'"':
+                break
+            else:
+                end += 1
+        if end >= len(text):
+            return False
+        next_index = end + 1
+        while next_index < len(text) and text[next_index] in u' \t\r\n':
+            next_index += 1
+        if next_index < len(text) and text[next_index] == u':':
+            try:
+                if json.loads(text[index:end + 1]) == u'kty':
+                    return True
+            except ValueError:
+                pass
+        index = end + 1
+    return False
+
+
+def _contains_jwk(obj):
+    objects_to_check = [obj]
+    while objects_to_check:
+        obj = objects_to_check.pop()
+        if isinstance(obj, dict):
+            if 'kty' in obj:
+                return True
+            objects_to_check.extend(obj.values())
+        elif isinstance(obj, list):
+            objects_to_check.extend(obj)
+    return False
+
+
 class HMACAlgorithm(Algorithm):
     """
     Performs signing and verification operations using HMAC
@@ -143,13 +223,34 @@ class HMACAlgorithm(Algorithm):
     def __init__(self, hash_alg):
         self.hash_alg = hash_alg
 
+    @staticmethod
+    def _is_der_key(key):
+        # A public key or certificate in DER form has no text marker for
+        # is_pem_format / is_ssh_key to find, so try to parse it.
+        if not has_crypto:
+            return False
+
+        try:
+            load_der_public_key(key, backend=default_backend())
+        except (TypeError, ValueError, UnsupportedAlgorithm):
+            pass
+        else:
+            return True
+
+        try:
+            load_der_x509_certificate(key, default_backend())
+        except (TypeError, ValueError, UnsupportedAlgorithm):
+            return False
+        else:
+            return True
+
     def prepare_key(self, key):
         key = force_bytes(key)
 
         if len(key) == 0:
             raise InvalidKeyError('HMAC key must not be empty.')
 
-        if is_pem_format(key) or is_ssh_key(key):
+        if is_pem_format(key) or is_ssh_key(key) or self._is_der_key(key):
             raise InvalidKeyError(
                 'The specified key is an asymmetric key or x509 certificate and'
                 ' should not be used as an HMAC secret.')
@@ -159,17 +260,33 @@ class HMACAlgorithm(Algorithm):
         # alg=HS*, and HMACAlgorithm is the only algorithm that accepts
         # arbitrary bytes as a valid secret. Even a symmetric (kty=oct) JWK
         # should be loaded via HMACAlgorithm.from_jwk rather than fed as raw
-        # JSON bytes (whose contents are not the secret material).
-        if key.lstrip().startswith(b'{'):
-            try:
-                jwk_obj = json.loads(key.decode('utf-8'))
-            except ValueError:
-                jwk_obj = None
-            if isinstance(jwk_obj, dict) and 'kty' in jwk_obj:
+        # JSON bytes (whose contents are not the secret material). Decode
+        # the way JSON allows (UTF-8 with or without a BOM, UTF-16, UTF-32)
+        # so a re-encoded JWK is still recognised.
+        # A JWK inside a container (a JWKS, an array) counts too.
+        key_text = _decode_json_text(key)
+        try:
+            # parse_int skips converting huge integers; only names matter.
+            jwk_obj = json.loads(key_text, parse_int=lambda _: 0)
+        except RuntimeError:
+            # Nested too deep to parse (RecursionError on Python 3). A
+            # top-level object, or an array with a "kty" member, is treated
+            # as a JWK rather than accepted.
+            stripped = key_text.lstrip(u'\ufeff \t\r\n')
+            if stripped.startswith(u'{') or (
+                    stripped.startswith(u'[') and _has_kty_member(key_text)):
                 raise InvalidKeyError(
                     'The specified key looks like a JWK and should not be'
                     ' used directly as an HMAC secret. Load it via'
                     ' HMACAlgorithm.from_jwk first.')
+            jwk_obj = None
+        except ValueError:
+            jwk_obj = None
+        if _contains_jwk(jwk_obj):
+            raise InvalidKeyError(
+                'The specified key looks like a JWK and should not be'
+                ' used directly as an HMAC secret. Load it via'
+                ' HMACAlgorithm.from_jwk first.')
 
         return key
 
