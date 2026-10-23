@@ -167,6 +167,50 @@ def _decode_json_text(b):
         return u''
 
 
+def _has_kty_member(text):
+    # Scan JSON text too deep to parse for a member named "kty", decoding
+    # each member name so an escaped one ("\u006bty") is found too.
+    index = 0
+    while index < len(text):
+        if text[index] != u'"':
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text):
+            if text[end] == u'\\':
+                end += 2
+            elif text[end] == u'"':
+                break
+            else:
+                end += 1
+        if end >= len(text):
+            return False
+        next_index = end + 1
+        while next_index < len(text) and text[next_index] in u' \t\r\n':
+            next_index += 1
+        if next_index < len(text) and text[next_index] == u':':
+            try:
+                if json.loads(text[index:end + 1]) == u'kty':
+                    return True
+            except ValueError:
+                pass
+        index = end + 1
+    return False
+
+
+def _contains_jwk(obj):
+    objects_to_check = [obj]
+    while objects_to_check:
+        obj = objects_to_check.pop()
+        if isinstance(obj, dict):
+            if 'kty' in obj:
+                return True
+            objects_to_check.extend(obj.values())
+        elif isinstance(obj, list):
+            objects_to_check.extend(obj)
+    return False
+
+
 class HMACAlgorithm(Algorithm):
     """
     Performs signing and verification operations using HMAC
@@ -219,13 +263,18 @@ class HMACAlgorithm(Algorithm):
         # JSON bytes (whose contents are not the secret material). Decode
         # the way JSON allows (UTF-8 with or without a BOM, UTF-16, UTF-32)
         # so a re-encoded JWK is still recognised.
+        # A JWK inside a container (a JWKS, an array) counts too.
         key_text = _decode_json_text(key)
         try:
-            jwk_obj = json.loads(key_text)
+            # parse_int skips converting huge integers; only names matter.
+            jwk_obj = json.loads(key_text, parse_int=lambda _: 0)
         except RuntimeError:
             # Nested too deep to parse (RecursionError on Python 3). A
-            # top-level object is treated as a JWK rather than accepted.
-            if key_text.lstrip(u'\ufeff \t\r\n').startswith(u'{'):
+            # top-level object, or an array with a "kty" member, is treated
+            # as a JWK rather than accepted.
+            stripped = key_text.lstrip(u'\ufeff \t\r\n')
+            if stripped.startswith(u'{') or (
+                    stripped.startswith(u'[') and _has_kty_member(key_text)):
                 raise InvalidKeyError(
                     'The specified key looks like a JWK and should not be'
                     ' used directly as an HMAC secret. Load it via'
@@ -233,7 +282,7 @@ class HMACAlgorithm(Algorithm):
             jwk_obj = None
         except ValueError:
             jwk_obj = None
-        if isinstance(jwk_obj, dict) and 'kty' in jwk_obj:
+        if _contains_jwk(jwk_obj):
             raise InvalidKeyError(
                 'The specified key looks like a JWK and should not be'
                 ' used directly as an HMAC secret. Load it via'
